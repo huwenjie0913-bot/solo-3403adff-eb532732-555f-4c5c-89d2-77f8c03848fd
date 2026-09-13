@@ -1,0 +1,244 @@
+{
+  "name": "dam-monitor",
+  "datum_points": [
+    {
+      "name": "D1",
+      "x": 0.0,
+      "y": 0.0,
+      "h": 100.0
+    },
+    {
+      "name": "D2",
+      "x": 1000.0,
+      "y": 0.0,
+      "h": 100.0
+    }
+  ],
+  "epochs": [
+    {
+      "epoch": "E1",
+      "time": "2026-01-01",
+      "batch": "batch-E1",
+      "observations": [
+        {
+          "id": "E1-D1D2",
+          "from": "D1",
+          "to": "D2",
+          "azimuth": 0.0,
+          "distance": 1000.0
+        },
+        {
+          "id": "E1-D1M1",
+          "from": "D1",
+          "to": "M1",
+          "azimuth": 38.66008603,
+          "distance": 640.3144
+        },
+        {
+          "id": "E1-D2M1",
+          "from": "D2",
+          "to": "M1",
+          "azimuth": 141.33991397,
+          "distance": 640.3104
+        },
+        {
+          "id": "E1-D1M2",
+          "from": "D1",
+          "to": "M2",
+          "azimuth": 50.19442891,
+          "distance": 781.025
+        },
+        {
+          "id": "E1-D2M2",
+          "from": "D2",
+          "to": "M2",
+          "azimuth": 129.80584887,
+          "distance": 781.027
+        },
+        {
+          "id": "E1-M1M2",
+          "from": "M1",
+          "to": "M2",
+          "azimuth": 89.99972222,
+          "distance": 199.998
+        },
+        {
+          "id": "E1-hD1D2",
+          "from": "D1",
+          "to": "D2",
+          "dh": 0.0
+        },
+        {
+          "id": "E1-hD1M1",
+          "from": "D1",
+          "to": "M1",
+          "dh": 1.001
+        },
+        {
+          "id": "E1-hD1M2",
+          "from": "D1",
+          "to": "M2",
+          "dh": 1.999
+        },
+        {
+          "id": "E1-hM1M2",
+          "from": "M1",
+          "to": "M2",
+          "dh": 1.0
+        }
+      ]
+    },
+    {
+      "epoch": "E2",
+      "time": "2026-03-01",
+      "batch": "batch-E2",
+      "observations": [
+        {
+          "id": "E2-D1D2",
+          "from": "D1",
+          "to": "D2",
+          "azimuth": 0.0,
+          "distance": 1000.0
+        },
+        {
+          "id": "E2-D1M1",
+          "from": "D1",
+          "to": "M1",
+          "azimuth": 38.66008603,
+          "distance": 640.3144
+        },
+        {
+          "id": "E2-D2M1",
+          "from": "D2",
+          "to": "M1",
+          "azimuth": 141.33991397,
+          "distance": 640.3104
+        },
+        {
+          "id": "E2-D1M2",
+          "from": "D1",
+          "to": "M2",
+          "azimuth": 50.19442891,
+          "distance": 781.025
+        },
+        {
+          "id": "E2-D2M2",
+          "from": "D2",
+          "to": "M2",
+          "azimuth": 129.80584887,
+          "distance": 781.027
+        },
+        {
+          "id": "E2-M1M2",
+          "from": "M1",
+          "to": "M2",
+          "azimuth": 89.99972222,
+          "distance": 199.998
+        },
+        {
+          "id": "E2-hD1D2",
+          "from": "D1",
+          "to": "D2",
+          "dh": 0.0
+        },
+        {
+          "id": "E2-hD1M1",
+          "from": "D1",
+          "to": "M1",
+          "dh": 1.001
+        },
+        {
+          "id": "E2-hD1M2",
+          "from": "D1",
+          "to": "M2",
+          "dh": 1.999
+        },
+        {
+          "id": "E2-hM1M2",
+          "from": "M1",
+          "to": "M2",
+          "dh": 1.0
+        }
+      ]
+    },
+    {
+      "epoch": "E3",
+      "time": "2026-05-01",
+      "batch": "batch-E3",
+      "observations": [
+        {
+          "id": "E3-D1D2",
+          "from": "D1",
+          "to": "D2",
+          "azimuth": 0.0,
+          "distance": 1000.0
+        },
+        {
+          "id": "E3-D1M1",
+          "from": "D1",
+          "to": "M1",
+          "azimuth": 38.65868869,
+          "distance": 640.366
+        },
+        {
+          "id": "E3-D2M1",
+          "from": "D2",
+          "to": "M1",
+          "azimuth": 141.33572142,
+          "distance": 640.2839
+        },
+        {
+          "id": "E3-D1M2",
+          "from": "D1",
+          "to": "M2",
+          "azimuth": 50.19442891,
+          "distance": 781.025
+        },
+        {
+          "id": "E3-D2M2",
+          "from": "D2",
+          "to": "M2",
+          "azimuth": 129.80584887,
+          "distance": 781.027
+        },
+        {
+          "id": "E3-M1M2",
+          "from": "M1",
+          "to": "M2",
+          "azimuth": 90.0140476,
+          "distance": 199.978
+        },
+        {
+          "id": "E3-hD1D2",
+          "from": "D1",
+          "to": "D2",
+          "dh": 0.0
+        },
+        {
+          "id": "E3-hD1M1",
+          "from": "D1",
+          "to": "M1",
+          "dh": 1.011
+        },
+        {
+          "id": "E3-hD1M2",
+          "from": "D1",
+          "to": "M2",
+          "dh": 1.999
+        },
+        {
+          "id": "E3-hM1M2",
+          "from": "M1",
+          "to": "M2",
+          "dh": 0.99
+        }
+      ]
+    }
+  ],
+  "displacement_threshold": 0.02,
+  "alternative_datum": [
+    "D1",
+    "M2"
+  ],
+  "save": false
+}

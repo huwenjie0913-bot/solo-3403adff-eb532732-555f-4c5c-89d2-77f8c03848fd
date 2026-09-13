@@ -79,3 +79,62 @@ class PreviewRequest(BaseModel):
         default_factory=dict,
         description="观测 id -> 该观测所有分量统一乘以的标准差倍数",
     )
+
+
+# ---------------------------------------------------------------------------
+# 多期形变分析
+# ---------------------------------------------------------------------------
+
+class EpochObservations(BaseModel):
+    """一期观测：时间、批次与该期的全部观测边。"""
+    epoch: str = Field(..., description="期次标识（唯一），如 E1")
+    time: str = Field(
+        ..., description="观测时刻，ISO 8601（如 2026-03-01 或 2026-03-01T08:30:00）"
+    )
+    batch: str = Field(..., description="观测批次号")
+    observations: list[Observation] = Field(default_factory=list)
+
+
+class DeformationRequest(BaseModel):
+    """多期形变分析请求。
+
+    各期观测分别平差，以稳定基准点（共同控制点）为固定约束把各期坐标
+    对齐到同一基准，再传播协方差并计算位移、置信椭球与显著性检验。
+    """
+    name: Optional[str] = Field(None, description="分析方案名称")
+    datum_points: list[KnownPoint] = Field(
+        default_factory=list,
+        description="稳定基准点（共同控制点）及其参考坐标，至少 2 个",
+    )
+    monitor_points: list[str] = Field(
+        default_factory=list,
+        description="监测点；缺省取各期共同出现的全部非基准点",
+    )
+    epochs: list[EpochObservations] = Field(
+        default_factory=list, description="多期观测（≥2 期，时间必须严格递增）"
+    )
+    epoch_selection: Optional[list[str]] = Field(
+        None, description="只重算选中的两期（给 2 个期次标识）；缺省连续多期分析"
+    )
+    displacement_threshold: float = Field(
+        0.01, gt=0.0, description="位移阈值（米），超过即认为发生形变"
+    )
+    confidence: float = Field(
+        0.95, gt=0.0, lt=1.0, description="置信椭球与显著性检验的置信度"
+    )
+    units: UnitSpec = Field(default_factory=UnitSpec)
+    accuracy: AccuracySpec = Field(default_factory=AccuracySpec)
+    outlier_threshold: float = Field(
+        3.0, gt=0.0, description="各期平差的标准化残差粗差判别阈值"
+    )
+    alternative_datum: Optional[list[str]] = Field(
+        None, description="替代基准点（≥2 个），用于与基准方案比较结论"
+    )
+    save: bool = Field(True, description="是否把分析参数与版本写入 SQLite")
+
+
+class DeformationRecomputeOptions(BaseModel):
+    """按版本复算形变分析时允许覆盖的选项。"""
+    epoch_selection: Optional[list[str]] = Field(
+        None, description="覆盖期次选择（恰好两期）；缺省沿用版本保存的参数"
+    )

@@ -65,6 +65,39 @@ uvicorn app.main:app --reload
 `std_overrides` 缩放标准差，返回与原案的对比：自由度、σ0、χ²、最大标准化残差、
 各环平差后闭合差以及 **点位位移（dx/dy/dh）与精度变化**，不写库、不改原案。
 
+## 多期形变分析
+
+同一控制网在不同日期复测时，单看两期坐标差会把仪器噪声误当成位移。
+`POST /api/v1/deformations` 对多期观测做完整的形变分析：
+
+**请求**：`datum_points`（稳定基准点/共同控制点及参考坐标，≥2）、`epochs[]`
+（每期 `epoch`/`time`/`batch`/`observations`，时间须严格递增）、
+`displacement_threshold`（位移阈值，米）、`confidence`、`epoch_selection`
+（给 2 个期次标识则只重算这两期，缺省连续多期）、`alternative_datum`
+（替代基准点，用于基准方案比较）。
+
+**处理**：各期分别平差（基准点固定 = 对齐到稳定基准）→ 协方差传播
+`Σ_d = Σ_0 + Σ_k` → 逐点计算三维位移、χ² 缩放的**置信椭球**、
+**联合显著性检验** `T = dᵀΣ_d⁻¹d ~ χ²(dim)`（并给各分量 z 检验）。
+
+**结果**：每个站点的逐期位移分量（dx/dy/dh/d2d/d3d）、**速度**（m/年）、
+**联合检验 p 值**、**首个超阈值时刻**、**参与观测** id 列表；
+`datum_comparison` 给出基准方案与替代基准（经 Helmert 变换对齐回主基准、
+协方差随 Jacobian 传播）下各点结论的逐项比较。
+
+**预检错误（400，逐条定位）**：
+
+- `insufficient_datum_points` 基准点不足（<2 个共同控制点）
+- `datum_point_not_observed` 基准点未在每期观测中出现
+- `epoch_time_order` 期次时间倒序或相同（指出相邻两期）
+- `epoch_point_mismatch` 历期间点名不一致（逐期列出缺失点）
+- `epoch_selection_invalid` / `alternative_datum_invalid` / `bad_epoch_time`
+
+**版本**：`save=true`（默认）把完整分析参数与摘要写入 SQLite，
+`GET /api/v1/deformation-schemes/{id}/versions/{no}` 按编号复取；
+`POST .../recompute` 复算，请求体可给 `{"epoch_selection": ["E1","E3"]}`
+覆盖为两期重算，`save=true` 时另存新版本。
+
 ## 版本与复算
 
 - `POST /api/v1/adjustments` 默认落库：同名方案递增版本号，保存**完整请求 JSON**
@@ -78,6 +111,9 @@ uvicorn app.main:app --reload
 ```bash
 curl -s localhost:8000/api/v1/adjustments -H 'Content-Type: application/json' \
   -d @examples/request.json | python3 -m json.tool | less
+
+curl -s localhost:8000/api/v1/deformations -H 'Content-Type: application/json' \
+  -d @examples/deformation_request.json | python3 -m json.tool | less
 
 pytest -q
 ```

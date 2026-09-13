@@ -64,3 +64,61 @@ def leveling_payload():
         "stations": ["B2", "B3"],
         "observations": obs,
     }
+
+
+def deformation_payload(**overrides):
+    """三期形变监测网：D1/D2 为稳定基准点，M1/M2 为监测点。
+
+    E3 期 M1 发生位移 (+5cm, +2cm, +1cm)，M2 保持不动；观测值由真值
+    加确定性微小噪声（±2mm / ±1″ / ±1mm）生成。
+    """
+    datum = {"D1": (0.0, 0.0, 100.0), "D2": (1000.0, 0.0, 100.0)}
+    truth = {
+        "E1": {"M1": (500.0, 400.0, 101.0), "M2": (500.0, 600.0, 102.0)},
+        "E2": {"M1": (500.0, 400.0, 101.0), "M2": (500.0, 600.0, 102.0)},
+        "E3": {"M1": (500.05, 400.02, 101.01), "M2": (500.0, 600.0, 102.0)},
+    }
+    times = {"E1": "2026-01-01", "E2": "2026-03-01", "E3": "2026-05-01"}
+    edges = [("D1", "D2"), ("D1", "M1"), ("D2", "M1"),
+             ("D1", "M2"), ("D2", "M2"), ("M1", "M2")]
+    dh_edges = [("D1", "D2"), ("D1", "M1"), ("D1", "M2"), ("M1", "M2")]
+
+    def noise(i, step):
+        return ((i % 3) - 1) * step
+
+    epochs = []
+    for ek in ("E1", "E2", "E3"):
+        pts = {**datum, **truth[ek]}
+        obs = []
+        i = 0
+        for f, t in edges:
+            i += 1
+            dx = pts[t][0] - pts[f][0]
+            dy = pts[t][1] - pts[f][1]
+            az = math.degrees(math.atan2(dy, dx)) + noise(i, 1.0 / 3600.0)
+            dist = math.hypot(dx, dy) + noise(i, 0.002)
+            obs.append({
+                "id": f"{ek}-{f}{t}", "from": f, "to": t,
+                "azimuth": round(az, 8), "distance": round(dist, 4),
+            })
+        for f, t in dh_edges:
+            i += 1
+            dh = pts[t][2] - pts[f][2] + noise(i, 0.001)
+            obs.append({
+                "id": f"{ek}-h{f}{t}", "from": f, "to": t, "dh": round(dh, 4),
+            })
+        epochs.append({
+            "epoch": ek, "time": times[ek], "batch": f"batch-{ek}",
+            "observations": obs,
+        })
+    payload = {
+        "name": "dam-monitor",
+        "datum_points": [
+            {"name": "D1", "x": 0.0, "y": 0.0, "h": 100.0},
+            {"name": "D2", "x": 1000.0, "y": 0.0, "h": 100.0},
+        ],
+        "epochs": epochs,
+        "displacement_threshold": 0.02,
+    }
+    payload.update(overrides.get("payload", {}))
+    return payload
