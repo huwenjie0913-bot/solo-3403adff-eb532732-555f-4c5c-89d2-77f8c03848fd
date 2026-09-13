@@ -1,0 +1,24 @@
+{
+  "name": "demo-closed-traverse",
+  "known": [
+    {"name": "A", "x": 0.0, "y": 0.0, "h": 100.0},
+    {"name": "B", "x": 1000.0, "y": 0.0, "h": 100.0}
+  ],
+  "stations": ["C", "D"],
+  "units": {"angle": "degree", "distance": "m", "height": "m", "covariance": "m"},
+  "accuracy": {
+    "std_azimuth_sec": 5.0,
+    "std_dist_const": 0.003,
+    "std_dist_ppm": 5.0,
+    "std_dh": 0.005
+  },
+  "outlier_threshold": 3.0,
+  "confidence": 0.95,
+  "observations": [
+    {"id": "eAB", "from": "A", "to": "B", "azimuth": 0.0011, "distance": 1000.002, "dh": 0.002},
+    {"id": "eBC", "from": "B", "to": "C", "azimuth": 89.9989, "distance": 999.997, "dh": -0.004},
+    {"id": "eCD", "from": "C", "to": "D", "azimuth": 180.0008, "distance": 1000.004, "dh": 0.003},
+    {"id": "eDA", "from": "D", "to": "A", "azimuth": 270.0003, "distance": 999.998, "dh": -0.002},
+    {"id": "eAC", "from": "A", "to": "C", "azimuth": "44-59-57", "distance": 1414.217, "dh": -0.001}
+  ]
+}
