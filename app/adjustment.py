@@ -233,29 +233,31 @@ def _validate_network(req, obs):
 
 
 # ---------------------------------------------------------------------------
-# 2. 初值（从已知点按完整边 BFS 传播）
+# 2. 初值（从已知点沿完整边双向 BFS 传播）
 # ---------------------------------------------------------------------------
 
 def _initial_coords(req, obs, info):
     x0 = {}
     if info["horiz_active"]:
         filled = {n: np.array([p.x, p.y], dtype=float) for n, p in info["known"].items()}
+        # 完整边（方位角+距离）按几何关系双向入表：已知任一端即可推算另一端
         complete = defaultdict(list)
         for r in obs:
             if r["az"] is not None and r["dist"] is not None:
-                complete[r["frm"]].append(r)
+                d = r["dist"] * np.array([math.cos(r["az"]), math.sin(r["az"])])
+                complete[r["frm"]].append((r["to"], d))
+                complete[r["to"]].append((r["frm"], -d))
         progress = True
         while progress:
             progress = False
-            for frm, rows in list(complete.items()):
-                if frm not in filled:
+            for u, edges in list(complete.items()):
+                if u not in filled:
                     continue
-                base = filled[frm]
-                for r in rows:
-                    if r["to"] in filled:
+                base = filled[u]
+                for v, d in edges:
+                    if v in filled:
                         continue
-                    d = r["dist"] * np.array([math.cos(r["az"]), math.sin(r["az"])])
-                    filled[r["to"]] = base + d
+                    filled[v] = base + d
                     progress = True
         missing = sorted({
             s for s in req.stations
@@ -265,8 +267,8 @@ def _initial_coords(req, obs, info):
         })
         if missing:
             raise AdjustmentError(
-                "无法由已知点推算初值（需要从已知点出发、方位角与距离齐全的导线边）: "
-                + ", ".join(missing),
+                "无法由已知点推算初值（需要与已知点连通、方位角与距离齐全的"
+                "导线边，边的方向不限）: " + ", ".join(missing),
                 "no_initial_coordinates", {"stations": missing},
             )
         for s in req.stations:

@@ -190,3 +190,32 @@ def test_duplicate_observation_warns_but_runs():
     res = run_adjustment(AdjustmentRequest.model_validate(payload))
     assert res["duplicates"]
     assert any("重复观测" in w for w in res["warnings"])
+
+
+def test_initial_coords_propagate_from_either_end():
+    """回归：待求点只位于完整边的 from 端时，初值应能沿观测几何反向推算。"""
+    # C 真值 (500, 400)，仅作为测站（from）出现：C->A、C->B 两条完整边
+    A = (0.0, 0.0)
+    B = (1000.0, 0.0)
+    C = (500.0, 400.0)
+
+    def edge(frm, to):
+        dx, dy = to[0] - frm[0], to[1] - frm[1]
+        return {"from": None, "to": None,
+                "azimuth": math.degrees(math.atan2(dy, dx)),
+                "distance": math.hypot(dx, dy)}
+
+    o1 = edge(C, A)
+    o1["from"], o1["to"] = "C", "A"
+    o2 = edge(C, B)
+    o2["from"], o2["to"] = "C", "B"
+    req = AdjustmentRequest(
+        known=[KnownPoint(name="A", x=A[0], y=A[1]),
+               KnownPoint(name="B", x=B[0], y=B[1])],
+        stations=["C"],
+        observations=[Observation(**o1), Observation(**o2)],
+    )
+    res = run_adjustment(req)  # 修复前：no_initial_coordinates
+    c = res["stations"][0]
+    assert c["x"] == pytest.approx(500.0, abs=1e-6)
+    assert c["y"] == pytest.approx(400.0, abs=1e-6)

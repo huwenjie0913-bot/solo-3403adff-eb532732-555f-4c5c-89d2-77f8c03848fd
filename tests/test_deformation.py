@@ -112,6 +112,23 @@ def test_alternative_datum_comparison():
     assert rows["M2"]["alternative"]["significant"] is False
 
 
+def test_alternative_datum_station_only_at_from_end():
+    """回归：原基准点 D2 转为待求点后只位于完整边的 from 端（网络中无
+    任何 ->D2 的边），初值反向传播应使替代基准比较无需补测 D1->D2。"""
+    payload = deformation_payload()
+    # 确认回归场景：D2 在所有期中都不出现在任何边的 to 端
+    for ep in payload["epochs"]:
+        assert all(o["to"] != "D2" for o in ep["observations"])
+    payload["alternative_datum"] = ["D1", "M2"]  # D2 变为待求点
+    res = run_deformation(DeformationRequest.model_validate(payload))
+    assert res["status"] == "ok"  # 修复前：400 no_initial_coordinates
+    rows = {r["name"]: r for r in res["datum_comparison"]["points"]}
+    assert rows["M1"]["alternative"]["significant"] is True
+    # D2 在替代方案中是自由点，位移应与主基准结论一致（不显著）
+    assert rows["D2"]["alternative"]["role"] == "monitor"
+    assert rows["D2"]["alternative"]["significant"] is False
+
+
 # ---------- 预检错误 ----------
 
 def test_error_epoch_time_reversed():
