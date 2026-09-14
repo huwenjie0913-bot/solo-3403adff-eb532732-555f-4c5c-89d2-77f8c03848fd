@@ -807,40 +807,60 @@ def _residuals_and_stats(req, obs, bls, sol):
         r_min = float(max(eig_r.min(), 0.0))
         redundancy = float(np.clip(np.trace(R) / 3.0, 0.0, 1.0))
 
-        # 物理残差协方差：白化空间 Lᵀ·R·L 对应物理量 C^{1/2} R C^{1/2}
-        # 由 H = (√w L⁻¹ J) N⁻¹ (√w L⁻¹ J)ᵀ 换算回物理空间：
-        Cv_prior = C - wf * J @ Ninv @ J.T
-        w_p, Vp = _sym_eigclip(Cv_prior)
+        # 物理残差协方差：白化空间 l_w = √w·L⁻¹·l，v_phys = (1/√w)·L·v_w，
+        # 故 Cv = (1/w)·L·(I−H)·Lᵀ = C₀/w − J·N⁻¹·Jᵀ
+        # （注意：右端折算回物理空间时 w 恰好约去，不能再乘 wf）
+        Cv_prior = C - J @ Ninv @ J.T
+        Cv_prior = 0.5 * (Cv_prior + Cv_prior.T)
+        # 完整 3×3 矩阵求逆（保留 dx/dy/dh 间全部相关性）；
+        # 秩亏（如多余观测为 0）时按特征值容差做 Moore-Penrose 伪逆
+        wv, Vv = np.linalg.eigh(Cv_prior)
+        tol = 1e-11 * max(1.0, float(np.max(np.abs(wv))))
+        pos = wv > tol
+        rank_cv = int(np.sum(pos))
         Cv_post = sigma0**2 * Cv_prior
 
         # 先验 Mahalanobis：w² = vᵀ Cv⁻¹ v（Baarda 数据探测，相关观测整体检验）
-        inv_prior = Vp @ np.diag(
-            np.where(w_p > 1e-12, 1.0 / np.where(w_p > 1e-12, w_p, 1.0), 0.0)
-        ) @ Vp.T
-        maha_prior = float(max(vphys @ inv_prior @ vphys, 0.0))
-        maha_post = maha_prior / sigma0**2 if sigma0 > 0 else None
-        p_prior = float(1.0 - stats.chi2.cdf(maha_prior, 3)) if r_min > 1e-9 else None
+        if rank_cv > 0:
+            inv_prior = (Vv[:, pos] * (1.0 / wv[pos])) @ Vv[:, pos].T
+            maha_prior = float(max(vphys @ inv_prior @ vphys, 0.0))
+        else:
+            maha_prior = None
+        maha_post = (
+            maha_prior / sigma0**2
+            if maha_prior is not None and sigma0 > 0 else None)
+        p_prior = (
+            float(stats.chi2.sf(maha_prior, rank_cv))
+            if maha_prior is not None else None)
 
-        # 分量级先验 Baarda w（物理残差 / 物理残差先验标准差）
+        # 分量级先验 Baarda w：必须取物理坐标（dx,dy,dh）顺序下 Cv 的对角元，
+        # 不能使用排序后的特征值
         comp_w, comp_out = [], False
         for k, cname in enumerate(("dx", "dy", "dh")):
-            se = math.sqrt(max(w_p[k], 0.0))
-            wk = float(vphys[k] / se) if se > 0 and w_p[k] > 1e-12 else None
+            var_k = float(Cv_prior[k, k])
+            if var_k > tol:
+                se = math.sqrt(max(var_k, 0.0))
+                wk = float(vphys[k] / se)
+            else:
+                se, wk = 0.0, None
             isc = bool(wk is not None and abs(wk) >= req.outlier_threshold)
             comp_out = comp_out or isc
             comp_w.append({
                 "component": cname,
                 "w": wk,
-                "residual_standard_error_m": se if w_p[k] > 1e-12 else None,
+                "residual_standard_error_m": se if wk is not None else None,
                 "is_outlier": isc,
             })
             if wk is not None:
                 max_abs_w = abs(wk) if max_abs_w is None else max(max_abs_w, abs(wk))
-        # 整体粗差：Mahalanobis 超过 df=3 的临界值，或任一分量 w 超限
-        maha_crit = float(stats.chi2.ppf(
-            1.0 - 2.0 * (1.0 - stats.norm.cdf(req.outlier_threshold)), 3))
-        group_out = bool(
-            (r_min > 1e-9 and maha_prior >= maha_crit) or comp_out)
+        # 整体粗差：Mahalanobis 超过 df=rank_cv 的临界值，或任一分量 w 超限
+        if rank_cv > 0 and maha_prior is not None:
+            maha_crit = float(stats.chi2.ppf(
+                1.0 - 2.0 * (1.0 - stats.norm.cdf(req.outlier_threshold)),
+                rank_cv))
+            group_out = bool(maha_prior >= maha_crit or comp_out)
+        else:
+            group_out = bool(comp_out)
 
         # 协方差贡献（信息矩阵 w·C₀⁻¹：基线对法方程的精度贡献）
         precision = wf * C0inv
@@ -894,10 +914,9 @@ def _residuals_and_stats(req, obs, bls, sol):
                 [float(x) for x in row] for row in Cv_prior],
             "residual_covariance_posterior_m2": [
                 [float(x) for x in row] for row in Cv_post],
-            "mahalanobis_prior": maha_prior if r_min > 1e-9 else None,
-            "mahalanobis_posterior": (
-                maha_post if (r_min > 1e-9 and maha_post is not None) else None),
-            "chi2_df": 3 if r_min > 1e-9 else None,
+            "mahalanobis_prior": maha_prior,
+            "mahalanobis_posterior": maha_post,
+            "chi2_df": rank_cv if maha_prior is not None else None,
             "p_value": p_prior,
             "component_tests": comp_w,
             "leverage": lev_trace,

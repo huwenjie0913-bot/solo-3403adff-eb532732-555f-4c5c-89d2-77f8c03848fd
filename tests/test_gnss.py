@@ -119,6 +119,97 @@ def test_gnss_point_has_3d_covariance_and_ellipsoid():
 
 # ---------- Mahalanobis 统计量与粗差 ----------
 
+def _two_baselines_to_one_point(C1, C2, d1, d2, w1=1.0, w2=1.0):
+    """A、B 已知相距 100 m，两条相关基线到同一待求点 C。"""
+    bls = [
+        Baseline(id="b1", **{"from": "A", "to": "C",
+                             "dx": d1[0], "dy": d1[1], "dh": d1[2],
+                             "covariance": np.asarray(C1).tolist(), "weight": w1}),
+        Baseline(id="b2", **{"from": "B", "to": "C",
+                             "dx": d2[0], "dy": d2[1], "dh": d2[2],
+                             "covariance": np.asarray(C2).tolist(), "weight": w2}),
+    ]
+    req = AdjustmentRequest(
+        known=[KnownPoint(name="A", x=0, y=0, h=100.0),
+               KnownPoint(name="B", x=100, y=0, h=100.0)],
+        stations=["C"], baselines=bls, save=False, outlier_threshold=3.0)
+    res = run_adjustment(req)
+    return {b["id"]: b for b in res["baselines"]}
+
+
+def test_mahalanobis_uses_full_residual_covariance():
+    """报告场景：dx 残差 3.5、残差方差 10.5 时 Mahalanobis 必须为 1.166667，
+
+    而不是把排序后的特征值当 dx 方差得到的 3.5²/1 = 12.25（误报粗差）。
+    """
+    C = np.diag([21.0, 21.0, 21.0])
+    # xhat = 100，v_b1 = -3.5；Cv = C/2 = 10.5·I
+    b1 = _two_baselines_to_one_point(
+        C, C, [103.5, 0.0, 0.0], [-3.5, 0.0, 0.0])["b1"]
+    Cv = np.array(b1["residual_covariance_m2"])
+    assert np.allclose(np.diag(Cv), 10.5)
+    assert b1["mahalanobis_prior"] == pytest.approx(3.5**2 / 10.5, abs=1e-9)
+    assert b1["mahalanobis_prior"] == pytest.approx(1.166667, abs=1e-6)
+    assert b1["p_value"] == pytest.approx(0.761, abs=0.01)
+    assert b1["p_value"] > 0.5
+    assert b1["is_outlier"] is False
+    # 分量检验必须按 dx/dy/dh 顺序取 Cv 对角元（sqrt(10.5)），而非特征值
+    ctests = {c["component"]: c for c in b1["component_tests"]}
+    assert ctests["dx"]["residual_standard_error_m"] == pytest.approx(
+        math.sqrt(10.5), abs=1e-9)
+    assert ctests["dx"]["w"] == pytest.approx(-3.5 / math.sqrt(10.5), abs=1e-9)
+    assert ctests["dy"]["w"] == 0.0 and ctests["dh"]["w"] == 0.0
+
+
+def test_non_default_weight_residual_covariance_positive():
+    """weight=4 时 Cv = C₀/w − J·N⁻¹·Jᵀ 必须仍为正定的理论值，
+
+    修复前多乘一次 w 会得到负方差（0.05 − 4×0.0471 < 0）。
+    """
+    # C1=0.2·I, w1=4 -> 有效 C1*=0.05·I；C2=0.8·I -> C2*=0.8·I
+    # x 方向：Ninv_x = 1/(4/0.2 + 1/0.8) = 1/21.25
+    ninv_x = 1.0 / (4.0 / 0.2 + 1.0 / 0.8)
+    expect_cv = 0.05 - ninv_x
+    b1 = _two_baselines_to_one_point(
+        np.diag([0.2, 0.2, 0.2]), np.diag([0.8, 0.8, 0.8]),
+        [100.0, 0.0, 0.0], [0.0, 0.0, 0.0], w1=4.0)["b1"]
+    Cv = np.array(b1["residual_covariance_m2"])
+    assert expect_cv == pytest.approx(0.002941, abs=1e-6)
+    assert np.allclose(np.diag(Cv), expect_cv, atol=1e-12)
+    assert np.all(np.linalg.eigvalsh(Cv) > 0)
+    assert b1["is_outlier"] is False
+    # 一致观测下残差为 0，Mahalanobis 为 0
+    assert b1["mahalanobis_prior"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_correlated_covariance_preserved_in_mahalanobis():
+    """含非零相关项时：Cv 必须保留非对角元，Mahalanobis 用完整 3×3 逆，
+
+    结果与把三分量当独立（只用对角元）不同。
+    """
+    C0 = np.array([[4.0, 2.0, 0.0],
+                   [2.0, 4.0, 1.0],
+                   [0.0, 1.0, 9.0]])
+    # 等协方差两条基线 -> xhat=103.1, v_b1 = [-0.1, 0, 0]；Cv = C0/2
+    b1 = _two_baselines_to_one_point(
+        C0, C0, [103.0, 0.0, 0.0], [3.2, 0.0, 0.0])["b1"]
+    v = np.array(b1["residual_vector_m"])
+    Cv = np.array(b1["residual_covariance_m2"])
+    assert np.allclose(v, [0.1, 0.0, 0.0], atol=1e-12)
+    assert Cv[0, 1] == pytest.approx(1.0, abs=1e-12)
+    assert Cv[1, 2] == pytest.approx(0.5, abs=1e-12)
+    maha_full = float(v @ np.linalg.solve(Cv, v))
+    maha_diag = float(np.sum(v**2 / np.diag(Cv)))
+    assert maha_full != pytest.approx(maha_diag, rel=1e-6)
+    # 解析值：0.02·35/104
+    assert maha_full == pytest.approx(0.02 * 35.0 / 104.0, abs=1e-12)
+    assert b1["mahalanobis_prior"] == pytest.approx(maha_full, abs=1e-12)
+    # 分量标准误取物理顺序对角元 sqrt(2)
+    ctests = {c["component"]: c for c in b1["component_tests"]}
+    assert ctests["dx"]["residual_standard_error_m"] == pytest.approx(
+        math.sqrt(2.0), abs=1e-12)
+
+
 def test_baseline_residual_fields():
     res = run_adjustment(AdjustmentRequest.model_validate(gnss_payload()))
     b = res["baselines"][0]
