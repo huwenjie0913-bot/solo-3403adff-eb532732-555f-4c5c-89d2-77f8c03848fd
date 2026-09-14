@@ -113,6 +113,10 @@ def save_version(
         "statistics": result.get("statistics"),
         "suspects": result.get("suspects"),
         "warnings": result.get("warnings"),
+        "baseline_count": len(result.get("baselines", [])),
+        "baseline_suspects": [
+            b["id"] for b in result.get("baselines", []) if b.get("is_outlier")
+        ],
         "stations": [
             {"name": s["name"], "x": s["x"], "y": s["y"], "h": s["h"]}
             for s in result.get("stations", [])

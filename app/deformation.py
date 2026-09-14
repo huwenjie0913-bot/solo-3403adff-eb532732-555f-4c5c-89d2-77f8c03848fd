@@ -60,6 +60,9 @@ def _epoch_point_names(epoch) -> set[str]:
     for o in epoch.observations:
         names.add(o.frm)
         names.add(o.to)
+    for b in getattr(epoch, "baselines", []):
+        names.add(b.frm)
+        names.add(b.to)
     return names
 
 
@@ -193,6 +196,7 @@ def _solve_epoch(req: DeformationRequest, epoch,
         known=known,
         stations=stations,
         observations=epoch.observations,
+        baselines=getattr(epoch, "baselines", []),
         units=req.units,
         accuracy=req.accuracy,
         outlier_threshold=req.outlier_threshold,
@@ -239,6 +243,11 @@ def _solve_epoch(req: DeformationRequest, epoch,
         obs_ids.append(oid)
         ids_by_point.setdefault(o.frm, []).append(oid)
         ids_by_point.setdefault(o.to, []).append(oid)
+    for i, b in enumerate(getattr(epoch, "baselines", []), start=1):
+        bid = b.id or f"b{i}"
+        obs_ids.append(bid)
+        ids_by_point.setdefault(b.frm, []).append(bid)
+        ids_by_point.setdefault(b.to, []).append(bid)
     return {
         "state": state, "result": res,
         "obs_ids": obs_ids, "ids_by_point": ids_by_point,

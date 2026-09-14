@@ -39,6 +39,25 @@ class Observation(BaseModel):
     weight: float = Field(1.0, ge=0.0, description="额外权重因子（乘在默认权重上）")
 
 
+class Baseline(BaseModel):
+    """GNSS 三维基线向量（接收机原始输出，三分量相关）。"""
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: Optional[str] = Field(None, description="基线编号，缺省自动生成 b1/b2…")
+    frm: str = Field(..., alias="from", description="基线起点")
+    to: str = Field(..., description="基线终点")
+    dx: float = Field(..., description="基线向量 x 分量 x(to)-x(from)")
+    dy: float = Field(..., description="基线向量 y 分量 y(to)-y(from)")
+    dh: float = Field(..., description="基线向量高程分量 h(to)-h(from)")
+    covariance: list[list[float]] = Field(
+        ..., description="完整 3×3 协方差阵 [[cxx,cxy,cxh],[cyx,cyy,cyh],[chx,chy,chh]]"
+    )
+    unit: Optional[Literal["m", "km", "ft", "us-ft"]] = Field(
+        None, description="分量与协方差的长度单位；缺省取 units.distance"
+    )
+    weight: float = Field(1.0, ge=0.0, description="额外权重因子（乘在先验精度上）")
+
+
 class AccuracySpec(BaseModel):
     """缺省先验精度（用于未逐条给出标准差的观测）。"""
     std_azimuth_sec: float = 5.0
@@ -56,6 +75,10 @@ class AdjustmentRequest(BaseModel):
     known: list[KnownPoint] = Field(default_factory=list)
     stations: list[str] = Field(default_factory=list, description="待求站点名")
     observations: list[Observation] = Field(default_factory=list)
+    baselines: list[Baseline] = Field(
+        default_factory=list,
+        description="GNSS 三维基线（dx/dy/dh + 完整 3×3 协方差阵，相关观测）",
+    )
     units: UnitSpec = Field(default_factory=UnitSpec)
     accuracy: AccuracySpec = Field(default_factory=AccuracySpec)
     outlier_threshold: float = Field(
@@ -79,6 +102,22 @@ class PreviewRequest(BaseModel):
         default_factory=dict,
         description="观测 id -> 该观测所有分量统一乘以的标准差倍数",
     )
+    disable_baselines: list[str] = Field(
+        default_factory=list, description="临时停用的 GNSS 基线 id"
+    )
+    baseline_covariance_scale: Optional[float] = Field(
+        None, gt=0.0,
+        description="所有参与预演的 GNSS 基线，其完整 3×3 协方差阵整体乘以该倍数"
+                    "（>1 放宽，<1 收紧）",
+    )
+    baseline_weight_overrides: dict[str, float] = Field(
+        default_factory=dict,
+        description="基线 id -> 新的额外权重因子（0 表示停用）",
+    )
+    baseline_covariance_scales: dict[str, float] = Field(
+        default_factory=dict,
+        description="基线 id -> 该基线协方差阵单独乘以的倍数",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +132,10 @@ class EpochObservations(BaseModel):
     )
     batch: str = Field(..., description="观测批次号")
     observations: list[Observation] = Field(default_factory=list)
+    baselines: list[Baseline] = Field(
+        default_factory=list,
+        description="该期 GNSS 三维基线（dx/dy/dh + 完整 3×3 协方差阵）",
+    )
 
 
 class DeformationRequest(BaseModel):

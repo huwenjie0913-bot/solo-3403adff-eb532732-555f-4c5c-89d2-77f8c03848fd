@@ -66,6 +66,46 @@ def leveling_payload():
     }
 
 
+def gnss_payload(**overrides):
+    """GNSS 三维基线网：G01 为唯一已知三维点，G02/G03/G04 待求。
+
+    真值坐标（米）：
+      G01 (0, 0, 100.0)、G02 (500, 0, 100.5)、
+      G03 (1000, 500, 101.71)、G04 (500, -500, 97.295)
+    4 条相关基线 G01->G02、G01->G03、G02->G04、G03->G04，
+    协方差含非零相关项；可注入粗差（gross_baseline / gross_component / gross_m）。
+    """
+    import numpy as np
+    P = {"G01": (0.0, 0.0, 100.0), "G02": (500.0, 0.0, 100.5),
+         "G03": (1000.0, 500.0, 101.71), "G04": (500.0, -500.0, 97.295)}
+    edges = [("b1", "G01", "G02", 0.005, 0.010),
+             ("b2", "G01", "G03", 0.006, 0.012),
+             ("b3", "G02", "G04", 0.005, 0.010),
+             ("b4", "G03", "G04", 0.007, 0.014)]
+    bl = []
+    gross = overrides.get("gross_baseline")
+    comp_idx = {"dx": 0, "dy": 1, "dh": 2}
+    for bid, f, t, sxy, sh in edges:
+        d = [P[t][0] - P[f][0], P[t][1] - P[f][1], P[t][2] - P[f][2]]
+        if gross == bid:
+            d[comp_idx[overrides.get("gross_component", "dx")]] += \
+                overrides.get("gross_m", 0.05)
+        C = np.array([[sxy**2, 0.12 * sxy**2, -0.03 * sxy * sh],
+                      [0.12 * sxy**2, sxy**2, 0.02 * sxy * sh],
+                      [-0.03 * sxy * sh, 0.02 * sxy * sh, sh**2]])
+        bl.append({"id": bid, "from": f, "to": t,
+                   "dx": d[0], "dy": d[1], "dh": round(d[2], 4),
+                   "covariance": C.tolist()})
+    payload = {
+        "name": "gnss-net",
+        "known": [{"name": "G01", "x": 0.0, "y": 0.0, "h": 100.0}],
+        "stations": ["G02", "G03", "G04"],
+        "baselines": bl,
+    }
+    payload.update(overrides.get("payload", {}))
+    return payload
+
+
 def deformation_payload(**overrides):
     """三期形变监测网：D1/D2 为稳定基准点，M1/M2 为监测点。
 

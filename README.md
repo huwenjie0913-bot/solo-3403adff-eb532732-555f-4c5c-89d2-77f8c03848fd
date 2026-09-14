@@ -1,15 +1,19 @@
 # 测量网平差 API（Survey Network Adjustment）
 
 外业多站导线与控制点汇总后，一次 **前后视写反、角度单位混用或单条粗差** 就可能让闭合差
-超限，却难以定位问题记录。本服务对平面导线（方位角 + 平距）和高程导线（高差）做统一
-预检与 **加权最小二乘参数平差**，逐条给出残差、标准化残差和粗差提示，并计算点位精度
-与误差椭圆；方案与计算版本写入 SQLite，可按编号复算并追溯全部参数。
+超限，却难以定位问题记录。本服务对平面导线（方位角 + 平距）、高程导线（高差）与
+**GNSS 三维基线向量（dx/dy/dh + 完整 3×3 相关协方差阵）** 做统一
+预检与 **加权最小二乘参数平差**，逐条给出残差、标准化残差/Mahalanobis 统计量和粗差提示，
+并计算点位精度、误差椭圆与三维误差椭球；方案与计算版本写入 SQLite，可按编号复算并追溯全部参数。
 
 - Python 3.11 · FastAPI · NumPy · SciPy · Pydantic v2
 - 内部统一 SI（弧度 / 米）；支持 `degree / gon / rad / DMS`（如 `112-30-15` 或 `112°30′15″`）
   角度单位与 `m / km / ft / us-ft` 长度单位
+- GNSS 基线保留接收机给出的分量相关性：平差前对每条基线做 **Cholesky 分解**，
+  同时白化残差向量与雅可比（`b = L⁻¹·l`、`B = L⁻¹·J`），再与方向角/平距/高差共同组成法方程
 - 内部使用测量界标准的 **Baarda w 检验**（先验标准化残差）判别粗差，避免后验 σ0 被粗差
-  撑大造成的掩盖（masking）；同时报告后验标准化残差 t
+  撑大造成的掩盖（masking）；相关基线整体用 **Mahalanobis 统计量 w² = vᵀΣ_v⁻¹v ~ χ²(3)**
+  检验，同时报告后验标准化残差 t
 
 ## 安装与运行
 
@@ -31,17 +35,43 @@ uvicorn app.main:app --reload
 | `known[]` | 已知点 `name/x/y/h`（h 可省略） |
 | `stations[]` | 待求站点名 |
 | `observations[]` | 每条边 `from/to` + 任意分量 `azimuth/distance/dh`，可逐条给 `std_*` 与 `weight` |
+| `baselines[]` | GNSS 三维基线 `from/to/dx/dy/dh` + **完整 3×3 `covariance`** 与 `unit`（缺省取 `units.distance`） |
 | `units` | angle/distance/height/covariance 单位 |
 | `accuracy` | 缺省先验精度：方向角中误差（秒）、测距固定误差+ppm、高差中误差 |
 | `outlier_threshold` | 粗差判别阈值（标准化残差，常用 2.5–3.0） |
-| `confidence` | 误差椭圆置信度（默认 0.95） |
+| `confidence` | 误差椭圆/椭球置信度（默认 0.95） |
 
 `azimuth` 传字符串时按 DMS 解析，即使全局单位是 degree 也可以混用 `45-00-00`。
+
+### GNSS 基线
+
+每条基线提交起点、终点、向量三分量与接收机输出的完整协方差阵
+（行/列顺序 `dx, dy, dh`，单位随分量，例如 m 与 m²）：
+
+```json
+{"id": "b1", "from": "G01", "to": "G02", "dx": 500.0, "dy": 0.0, "dh": 0.5,
+ "covariance": [[2.5e-5, 3.0e-6, -1.5e-6],
+                [3.0e-6, 2.5e-5,  1.0e-6],
+                [-1.5e-6, 1.0e-6,  1.0e-4]]}
+```
+
+- 协方差按单位换算（分量乘 `k` 时协方差乘 `k²`），**检查对称性**（相对容差 1e-9）
+  与 **正定性**（Cholesky；失败返回特征值）；基线同时进入网络连通性、初值双向传播与秩亏诊断
+- 纯 GNSS 基线网 **1 个已知三维点** 即可固定全部 7 个基准亏缺（基线向量自带尺度与方向）；
+  与全站仪网混合时，不含基线的平面分量仍需 2 个已知点固定旋转；基线端点若是已知点则必须给 `h`
+- 响应 `baselines[]` 逐条给出：**残差向量**（米与输入单位）、残差模、
+  先验/后验 **Mahalanobis 统计量** 与 χ²(3) p 值、各分量先验 Baarda w、
+  冗余度与杠杆值、**协方差贡献**（信息矩阵 `w·C⁻¹` 与去掉该基线后端点协方差的缩减量）、粗差标记
+- 基线上端点的 x/y/h 联合估计，`stations[]` 增加完整 **3×3 点位协方差**与 95% 三维误差椭球
 
 ## 预检（失败返回 400 与错误码）
 
 - `unknown_endpoint` / `duplicate_point` / `self_loop` / `empty_observation` / `bad_std`
-- 平面网 **≥2 个已知点**、高程网 **≥1 个已知高程点**（`insufficient_datum` / `insufficient_height_datum`）
+- 平面网 **≥2 个已知点**（纯全站仪网）；含 GNSS 基线的分量 **≥1 个已知三维点**
+  （`insufficient_datum`）；高程网 **≥1 个已知高程点**（`insufficient_height_datum`）
+- 基线已知端点必须有高程（`baseline_endpoint_without_height`）
+- 基线协方差形状不是 3×3（`bad_covariance_shape`）、不对称（`covariance_not_symmetric`）、
+  非正定（`covariance_not_positive_definite`，附特征值）
 - 连通性检查（`disconnected` / `height_disconnected`）、无观测连接站点（`unobserved_station`）
 - 初值无法传播（`no_initial_coordinates`）
 - 法方程 SVD **秩亏诊断**（`rank_deficient`）：给出缺秩维数与零空间归因参数
@@ -62,8 +92,20 @@ uvicorn app.main:app --reload
 ## 预演（what-if）
 
 `POST /api/v1/preview` 在原案上临时 `disable` 观测、`weight_overrides` 调权或
-`std_overrides` 缩放标准差，返回与原案的对比：自由度、σ0、χ²、最大标准化残差、
-各环平差后闭合差以及 **点位位移（dx/dy/dh）与精度变化**，不写库、不改原案。
+`std_overrides` 缩放标准差，返回与原案的对比：自由度、秩与缺秩、参数个数、σ0、χ²、
+最大标准化残差/Baarda 值、各环平差后闭合差以及 **点位位移（dx/dy/dh）与精度变化**，
+不写库、不改原案。
+
+GNSS 基线相关参数：
+
+- `disable_baselines: ["b1"]` 临时停用基线（自由度每条减少 3；停用后若基准不足会返回 400）
+- `baseline_covariance_scale: 4.0` 对全部基线的完整 3×3 协方差阵 **整体缩放**
+  （>1 放宽/降权，<1 收紧；`scale=4` 相当于所有分量标准差翻倍）
+- `baseline_covariance_scales: {"b2": 9.0}` 逐条缩放；与整体缩放连乘
+- `baseline_weight_overrides: {"b1": 0.0}` 基线调权（0 等同于停用）
+
+对比结果中 `baseline_count`、`rank`、`rank_deficiency`、`parameters` 随之更新，
+便于比较加入/停用基线或改变其先验精度前后的坐标、点位精度、自由度与秩。
 
 ## 多期形变分析
 
@@ -71,7 +113,8 @@ uvicorn app.main:app --reload
 `POST /api/v1/deformations` 对多期观测做完整的形变分析：
 
 **请求**：`datum_points`（稳定基准点/共同控制点及参考坐标，≥2）、`epochs[]`
-（每期 `epoch`/`time`/`batch`/`observations`，时间须严格递增）、
+（每期 `epoch`/`time`/`batch`/`observations`，并可选提交 `baselines` GNSS 三维基线，
+时间须严格递增）、
 `displacement_threshold`（位移阈值，米）、`confidence`、`epoch_selection`
 （给 2 个期次标识则只重算这两期，缺省连续多期）、`alternative_datum`
 （替代基准点，用于基准方案比较）。
@@ -111,6 +154,10 @@ uvicorn app.main:app --reload
 ```bash
 curl -s localhost:8000/api/v1/adjustments -H 'Content-Type: application/json' \
   -d @examples/request.json | python3 -m json.tool | less
+
+# 全站仪 + GNSS 三维基线联合平差
+curl -s localhost:8000/api/v1/adjustments -H 'Content-Type: application/json' \
+  -d @examples/gnss_baseline_request.json | python3 -m json.tool | less
 
 curl -s localhost:8000/api/v1/deformations -H 'Content-Type: application/json' \
   -d @examples/deformation_request.json | python3 -m json.tool | less
