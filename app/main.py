@@ -13,6 +13,12 @@
 * GET  /api/v1/deformation-schemes/{id}/versions             版本列表
 * GET  /api/v1/deformation-schemes/{id}/versions/{no}       按编号复取
 * POST /api/v1/deformation-schemes/{id}/versions/{no}/recompute
+* POST /api/v1/network-designs                     测前网形设计并（可选）落库
+* POST /api/v1/network-designs/compare             两套网形对比（不落库）
+* GET  /api/v1/design-schemes                      设计方案列表
+* GET  /api/v1/design-schemes/{id}/versions                   版本列表
+* GET  /api/v1/design-schemes/{id}/versions/{no}            按编号复取（含结果）
+* POST /api/v1/design-schemes/{id}/versions/{no}/replay     加锁/调预算重演
 * GET  /health, /api/v1/software_versions
 """
 from __future__ import annotations
@@ -31,10 +37,19 @@ from fastapi.responses import JSONResponse
 from . import __version__, storage
 from .adjustment import AdjustmentError, public_result, run_adjustment
 from .deformation import run_deformation
+from .design import (
+    DESIGN_ALGORITHM_VERSION,
+    apply_replay_options,
+    compare_designs,
+    run_design,
+)
 from .models import (
     AdjustmentRequest,
     DeformationRecomputeOptions,
     DeformationRequest,
+    DesignCompareRequest,
+    DesignReplayOptions,
+    NetworkDesignRequest,
     PreviewRequest,
 )
 from .preview import run_preview
@@ -73,6 +88,7 @@ def software_versions() -> dict[str, str]:
         "numpy": np.__version__,
         "scipy": scipy.__version__,
         "platform": platform.platform(),
+        "network_design_algorithm": DESIGN_ALGORITHM_VERSION,
     }
 
 
@@ -219,6 +235,98 @@ def recompute_deformation(
         "created_at": v["created_at"],
         "software": v["software"],
         "request_parameters": v["request"],
+    }
+    result["version"] = new_version
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 测前网形设计
+# ---------------------------------------------------------------------------
+
+@app.post("/api/v1/network-designs")
+def create_network_design(req: NetworkDesignRequest):
+    """测前网形设计：基准/连通/秩检查、精度与可靠性评定、贪心选观测。"""
+    result = run_design(req)
+    version_info = None
+    if req.save:
+        version_info = storage.save_design_version(req, result, software_versions())
+    result["version"] = version_info
+    return result
+
+
+@app.post("/api/v1/network-designs/compare")
+def compare_network_designs(req: DesignCompareRequest):
+    """两套网形设计对比：总成本、最弱点精度、可靠性、秩与入选集合差异。"""
+    req_a = req.design_a.model_copy(deep=True)
+    req_b = req.design_b.model_copy(deep=True)
+    req_a.save = req_b.save = False
+    result_a = run_design(req_a)
+    result_b = run_design(req_b)
+    comparison = compare_designs(result_a, result_b)
+    comparison["design_a"] = {
+        "summary": comparison["design_a"],
+        "result": result_a,
+    }
+    comparison["design_b"] = {
+        "summary": comparison["design_b"],
+        "result": result_b,
+    }
+    return comparison
+
+
+@app.get("/api/v1/design-schemes")
+def get_design_schemes():
+    return {"schemes": storage.list_design_schemes()}
+
+
+@app.get("/api/v1/design-schemes/{scheme_id}/versions")
+def get_design_versions(scheme_id: int):
+    versions = storage.list_design_versions(scheme_id)
+    return {"scheme_id": scheme_id, "versions": versions}
+
+
+@app.get("/api/v1/design-schemes/{scheme_id}/versions/{version_no}")
+def get_design_version(scheme_id: int, version_no: int):
+    """按编号复取设计版本：完整请求、设计结果、摘要、算法与软件版本。"""
+    try:
+        v = storage.load_design_version(scheme_id, version_no)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return v
+
+
+@app.post("/api/v1/design-schemes/{scheme_id}/versions/{version_no}/replay")
+def replay_design_version(
+    scheme_id: int,
+    version_no: int,
+    options: Optional[DesignReplayOptions] = None,
+    save: bool = False,
+):
+    """按历史版本重演：可追加锁定/解锁候选或调整预算。
+
+    缺省仅按保存的请求原样重算（``save=false`` 不产生新版本）；
+    ``save=true`` 时作为同名设计方案的新版本落库。
+    """
+    try:
+        v = storage.load_design_version(scheme_id, version_no)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    req = NetworkDesignRequest.model_validate(v["request"])
+    req = apply_replay_options(req, options)
+    req.save = save
+    result = run_design(req)
+    new_version = None
+    if save:
+        new_version = storage.save_design_version(req, result, software_versions())
+    result["replayed_from"] = {
+        "scheme_id": scheme_id,
+        "version_no": version_no,
+        "created_at": v["created_at"],
+        "software": v["software"],
+        "algorithm_version": v["algorithm_version"],
+        "request_parameters": v["request"],
+        "options": options.model_dump() if options is not None else None,
     }
     result["version"] = new_version
     return result

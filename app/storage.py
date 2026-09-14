@@ -12,7 +12,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .models import AdjustmentRequest, DeformationRequest
+from .models import AdjustmentRequest, DeformationRequest, NetworkDesignRequest
 
 DB_PATH = os.environ.get(
     "ADJUSTMENT_DB", os.path.join(os.path.dirname(__file__), "..", "data", "adjustment.db")
@@ -60,6 +60,26 @@ CREATE TABLE IF NOT EXISTS deformation_versions (
     request_json    TEXT NOT NULL,
     summary_json    TEXT NOT NULL,
     software_json   TEXT NOT NULL,
+    UNIQUE(scheme_id, version_no)
+);
+
+CREATE TABLE IF NOT EXISTS design_schemes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT,
+    created_at  TEXT NOT NULL,
+    UNIQUE(name)
+);
+
+CREATE TABLE IF NOT EXISTS design_versions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheme_id           INTEGER NOT NULL REFERENCES design_schemes(id),
+    version_no          INTEGER NOT NULL,
+    created_at          TEXT NOT NULL,
+    request_json        TEXT NOT NULL,
+    summary_json        TEXT NOT NULL,
+    result_json         TEXT NOT NULL,
+    software_json       TEXT NOT NULL,
+    algorithm_version   TEXT NOT NULL,
     UNIQUE(scheme_id, version_no)
 );
 """
@@ -305,6 +325,111 @@ def list_deformation_schemes() -> list[dict[str, Any]]:
         """SELECT s.id, s.name, s.created_at, COUNT(v.id) AS version_count
            FROM deformation_schemes s
            LEFT JOIN deformation_versions v ON v.scheme_id = s.id
+           GROUP BY s.id ORDER BY s.id"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# 测前网形设计的方案与版本
+# ---------------------------------------------------------------------------
+
+def save_design_version(
+    req: NetworkDesignRequest,
+    result: dict[str, Any],
+    software: dict[str, str],
+) -> dict[str, int]:
+    """保存网形设计方案与新版本（含完整结果，供按编号直接复取/重演）。"""
+    conn = get_conn()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    from .design import design_summary
+    summary = design_summary(result)
+    with _LOCK, conn:
+        cur = conn.execute(
+            "SELECT id FROM design_schemes WHERE name IS ?", (req.name,))
+        row = cur.fetchone()
+        if row is None:
+            cur = conn.execute(
+                "INSERT INTO design_schemes(name, created_at) VALUES (?, ?)",
+                (req.name, now))
+            scheme_id = cur.lastrowid
+            version_no = 1
+        else:
+            scheme_id = row["id"]
+            cur = conn.execute(
+                "SELECT COALESCE(MAX(version_no), 0) + 1 "
+                "FROM design_versions WHERE scheme_id = ?",
+                (scheme_id,))
+            version_no = cur.fetchone()[0]
+
+        cur = conn.execute(
+            """INSERT INTO design_versions
+               (scheme_id, version_no, created_at, request_json,
+                summary_json, result_json, software_json, algorithm_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (scheme_id, version_no, now,
+             req.model_dump_json(by_alias=True),
+             json.dumps(summary, ensure_ascii=False),
+             json.dumps(result, ensure_ascii=False),
+             json.dumps(software, ensure_ascii=False),
+             result.get("algorithm_version")),
+        )
+        return {
+            "scheme_id": scheme_id,
+            "version_id": cur.lastrowid,
+            "version_no": version_no,
+        }
+
+
+def load_design_version(scheme_id: int, version_no: int) -> dict[str, Any]:
+    conn = get_conn()
+    row = conn.execute(
+        """SELECT v.*, s.name AS scheme_name FROM design_versions v
+           JOIN design_schemes s ON s.id = v.scheme_id
+           WHERE v.scheme_id = ? AND v.version_no = ?""",
+        (scheme_id, version_no),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"未找到网形设计方案 {scheme_id} 的版本 {version_no}")
+    return {
+        "scheme_id": row["scheme_id"],
+        "scheme_name": row["scheme_name"],
+        "version_no": row["version_no"],
+        "created_at": row["created_at"],
+        "request": json.loads(row["request_json"]),
+        "summary": json.loads(row["summary_json"]),
+        "result": json.loads(row["result_json"]),
+        "software": json.loads(row["software_json"]),
+        "algorithm_version": row["algorithm_version"],
+    }
+
+
+def list_design_versions(scheme_id: Optional[int] = None) -> list[dict[str, Any]]:
+    conn = get_conn()
+    sql = """SELECT s.id AS scheme_id, s.name AS scheme_name,
+                    v.version_no, v.id AS version_id, v.created_at,
+                    v.summary_json, v.algorithm_version
+             FROM design_versions v
+             JOIN design_schemes s ON s.id = v.scheme_id"""
+    params = ()
+    if scheme_id is not None:
+        sql += " WHERE s.id = ?"
+        params = (scheme_id,)
+    sql += " ORDER BY s.id, v.version_no"
+    out = []
+    for r in conn.execute(sql, params):
+        item = dict(r)
+        item["summary"] = json.loads(item.pop("summary_json"))
+        out.append(item)
+    return out
+
+
+def list_design_schemes() -> list[dict[str, Any]]:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT s.id, s.name, s.created_at, COUNT(v.id) AS version_count
+           FROM design_schemes s
+           LEFT JOIN design_versions v ON v.scheme_id = s.id
            GROUP BY s.id ORDER BY s.id"""
     ).fetchall()
     return [dict(r) for r in rows]
